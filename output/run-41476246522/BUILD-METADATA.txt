@@ -1,0 +1,9 @@
+source=https://github.com/firstoni-dev/ascension-extensions-reconstruction
+source_ref=main
+source_commit=ecdd9169d184d7bdd4b0d7aea55b2ebff82e713d
+configuration=RelWithDebInfo
+architecture=PE32 i386 (0x014c)
+ASCENSION_NATIVE_LOGON=OFF
+ASCENSION_HOT_PATCH=OFF
+size=6994432
+sha256=0b20e8d9e54082b1638cc76ead7e210d8d0024b8eefaae59243e091ddf682264

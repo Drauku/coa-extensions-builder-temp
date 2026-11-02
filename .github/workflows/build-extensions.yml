@@ -1,0 +1,78 @@
+name: Build reconstructed Extensions.dll
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: firstoni-dev source branch, tag, or commit
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - name: Clone reconstruction source
+        shell: pwsh
+        run: |
+          git clone --filter=blob:none --no-checkout `
+            https://github.com/firstoni-dev/ascension-extensions-reconstruction.git source
+          git -C source fetch --depth 1 origin "${{ inputs.source_ref }}"
+          git -C source checkout --detach FETCH_HEAD
+          git -C source rev-parse HEAD | Set-Content -NoNewline source-commit.txt
+
+      - name: Build 32-bit DLL with MSVC
+        shell: cmd
+        run: |
+          @echo on
+          for /f "usebackq tokens=*" %%i in (`vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS_PATH=%%i"
+          if not defined VS_PATH exit /b 1
+          call "%VS_PATH%\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
+          cmake -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DASCENSION_NATIVE_LOGON=OFF -DASCENSION_HOT_PATCH=OFF -S source -B source\build
+          if errorlevel 1 exit /b 1
+          cmake --build source\build
+          if errorlevel 1 exit /b 1
+
+      - name: Verify and stage artifact
+        shell: pwsh
+        run: |
+          $dll = Resolve-Path source/build/Extensions.dll
+          $bytes = [System.IO.File]::ReadAllBytes($dll)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0x014c) {
+            throw ("Expected PE32 i386 machine 0x014c; got 0x{0:x4}" -f $machine)
+          }
+
+          $sourceCommit = Get-Content -Raw source-commit.txt
+          $hash = (Get-FileHash $dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size = (Get-Item $dll).Length
+
+          New-Item -ItemType Directory -Path artifact | Out-Null
+          Copy-Item $dll artifact/Extensions.dll
+          @(
+            "source=https://github.com/firstoni-dev/ascension-extensions-reconstruction"
+            "source_ref=${{ inputs.source_ref }}"
+            "source_commit=$sourceCommit"
+            "configuration=RelWithDebInfo"
+            "architecture=PE32 i386 (0x014c)"
+            "ASCENSION_NATIVE_LOGON=OFF"
+            "ASCENSION_HOT_PATCH=OFF"
+            "size=$size"
+            "sha256=$hash"
+          ) | Set-Content artifact/BUILD-METADATA.txt
+          Get-Content artifact/BUILD-METADATA.txt
+
+      - name: Upload DLL and provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: extensions-dll
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 1
+
